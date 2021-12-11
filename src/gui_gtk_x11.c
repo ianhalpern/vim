@@ -81,6 +81,7 @@ extern void bonobo_dock_item_set_behavior(BonoboDockItem *dock_item, BonoboDockI
 #else
 # if GTK_CHECK_VERSION(3,0,0)
 #  include <gdk/gdkkeysyms-compat.h>
+#  include <gdk/gdkwayland.h>
 #  include <gtk/gtkx.h>
 # else
 #  include <gdk/gdkkeysyms.h>
@@ -94,6 +95,7 @@ extern void bonobo_dock_item_set_behavior(BonoboDockItem *dock_item, BonoboDockI
 # include <gtk/gtk.h>
 # include "gui_gtk_f.h"
 #endif
+# include <gtk/gtkwidget.h>
 
 #ifdef HAVE_X11_SUNKEYSYM_H
 # include <X11/Sunkeysym.h>
@@ -395,6 +397,12 @@ static int using_gnome = 0;
 #else
 # define using_gnome 0
 #endif
+
+   int
+gui_is_x11() {
+	GdkDisplay *display = gdk_display_manager_get_default_display(gdk_display_manager_get());
+	return GDK_IS_X11_DISPLAY(display);
+}
 
 /*
  * Parse the GUI related command-line arguments.  Any arguments used are
@@ -1690,7 +1698,8 @@ gui_mch_init_check(void)
 #if GTK_CHECK_VERSION(3,10,0)
     // Vim currently assumes that Gtk means X11, so it cannot use native Gtk
     // support for other backends such as Wayland.
-    gdk_set_allowed_backends ("x11");
+    //gdk_set_allowed_backends ("x11");
+    //gdk_set_allowed_backends ("wayland");
 #endif
 
 #ifdef FEAT_GUI_GNOME
@@ -2009,18 +2018,20 @@ scroll_event(GtkWidget *widget,
 
     switch (event->direction)
     {
-	case GDK_SCROLL_UP:
-	    button = MOUSE_4;
-	    break;
-	case GDK_SCROLL_DOWN:
-	    button = MOUSE_5;
-	    break;
 	case GDK_SCROLL_LEFT:
 	    button = MOUSE_7;
 	    break;
 	case GDK_SCROLL_RIGHT:
 	    button = MOUSE_6;
 	    break;
+	case GDK_SCROLL_SMOOTH:
+	    if ( (int)event->delta_y > 0) {
+		button = MOUSE_5;
+		break;
+	    } else if ( (int)event->delta_y < 0 ) {
+		button = MOUSE_4;
+		break;
+	    }
 	default: // This shouldn't happen
 	    return FALSE;
     }
@@ -2642,8 +2653,9 @@ mainwin_realize(GtkWidget *widget UNUSED, gpointer data UNUSED)
 	 * have to change the "server" registration to that of the main window
 	 * If we have not registered a name yet, remember the window.
 	 */
-	serverChangeRegisteredWindow(GDK_WINDOW_XDISPLAY(mainwin_win),
-				     GDK_WINDOW_XID(mainwin_win));
+	if (gui_is_x11())
+            serverChangeRegisteredWindow(GDK_WINDOW_XDISPLAY(mainwin_win),
+				         GDK_WINDOW_XID(mainwin_win));
     }
     gtk_widget_add_events(gui.mainwin, GDK_PROPERTY_CHANGE_MASK);
     g_signal_connect(G_OBJECT(gui.mainwin), "property-notify-event",
@@ -2798,6 +2810,8 @@ drawarea_realize_cb(GtkWidget *widget, gpointer data UNUSED)
     sbar = gui.bottom_sbar.id;
     if (sbar && gtk_widget_get_realized(sbar) && allocation.height)
 	gui.scrollbar_height = allocation.height;
+
+    gui_gtk_set_selection_targets();
 }
 
 /*
@@ -3528,12 +3542,15 @@ gui_gtk_set_selection_targets(void)
 
     gtk_selection_clear_targets(gui.drawarea, (GdkAtom)GDK_SELECTION_PRIMARY);
     gtk_selection_clear_targets(gui.drawarea, (GdkAtom)clip_plus.gtk_sel_atom);
-    gtk_selection_add_targets(gui.drawarea,
-			      (GdkAtom)GDK_SELECTION_PRIMARY,
-			      targets, n_targets);
-    gtk_selection_add_targets(gui.drawarea,
-			      (GdkAtom)clip_plus.gtk_sel_atom,
-			      targets, n_targets);
+    if ( gtk_widget_get_window(gui.drawarea) != NULL) {
+        gtk_selection_add_targets(gui.drawarea,
+			          (GdkAtom)GDK_SELECTION_PRIMARY,
+			          targets, n_targets);
+        gtk_selection_add_targets(gui.drawarea,
+			          (GdkAtom)clip_plus.gtk_sel_atom,
+			          targets, n_targets);
+    }
+
 }
 
 /*
@@ -4007,7 +4024,7 @@ gui_mch_init(void)
 		     G_CALLBACK(button_press_event), NULL);
     g_signal_connect(G_OBJECT(gui.drawarea), "button-release-event",
 		     G_CALLBACK(button_release_event), NULL);
-    g_signal_connect(G_OBJECT(gui.drawarea), "scroll-event",
+    g_signal_connect(G_OBJECT(gui.mainwin), "scroll-event",
 		     G_CALLBACK(&scroll_event), NULL);
 
     /*
@@ -6623,9 +6640,11 @@ clip_mch_request_selection(Clipboard_T *cbd)
 	    return;
     }
 
-    // Final fallback position - use the X CUT_BUFFER0 store
-    yank_cut_buffer0(GDK_WINDOW_XDISPLAY(gtk_widget_get_window(gui.mainwin)),
-	    cbd);
+    if (gui_is_x11()) {
+        // Final fallback position - use the X CUT_BUFFER0 store
+        yank_cut_buffer0(GDK_WINDOW_XDISPLAY(gtk_widget_get_window(gui.mainwin)),
+	        cbd);
+    }
 }
 
 /*
@@ -6660,8 +6679,26 @@ clip_mch_own_selection(Clipboard_T *cbd)
  * will fill in the selection only when requested by another app.
  */
     void
-clip_mch_set_selection(Clipboard_T *cbd UNUSED)
+clip_mch_set_selection(Clipboard_T *cbd)
 {
+    if (gui_is_x11()) return;
+
+    long_u llen = 0; char_u *str = 0;
+    int motion_type = clip_convert_selection(&str, &llen, cbd);
+    if (motion_type < 0)
+	return;
+	//goto releasepool;
+
+    int len = (int)llen;
+    char_u *conv_str = string_convert(&output_conv, str, &len);
+    if (conv_str)
+    {
+	vim_free(str);
+	str = conv_str;
+    }
+
+    GtkClipboard* clipboard = gtk_clipboard_get(GDK_SELECTION_CLIPBOARD);
+    gtk_clipboard_set_text(clipboard, str, len);
 }
 
 #if (defined(FEAT_XCLIPBOARD) && defined(USE_SYSTEM)) || defined(PROTO)

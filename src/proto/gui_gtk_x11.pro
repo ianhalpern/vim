@@ -77,4 +77,5 @@ void mch_set_mouse_shape(int shape);
 void gui_mch_drawsign(int row, int col, int typenr);
 void *gui_mch_register_sign(char_u *signfile);
 void gui_mch_destroy_sign(void *sign);
+int gui_is_x11();
 /* vim: set ft=c : */

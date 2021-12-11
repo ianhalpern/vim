@@ -2148,8 +2148,10 @@ mch_settitle(char_u *title, char_u *icon)
      * if the window ID and the display is known, we may use X11 calls
      */
 #ifdef FEAT_X11
-    if (get_x11_windis() == OK)
-	type = 1;
+    if (gui_is_x11()) {
+        if (get_x11_windis() == OK)
+	    type = 1;
+    }
 #else
 # if defined(FEAT_GUI_PHOTON) || defined(FEAT_GUI_MAC) || defined(FEAT_GUI_GTK)
     if (gui.in_use)
@@ -3292,7 +3294,9 @@ mch_exit(int r)
     exiting = TRUE;
 
 #if defined(FEAT_X11) && defined(FEAT_CLIPBOARD)
-    x11_export_final_selection();
+    if (gui_is_x11()) {
+        x11_export_final_selection();
+    }
 #endif
 
 #ifdef FEAT_GUI

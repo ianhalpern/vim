@@ -196,9 +196,10 @@ gui_attempt_start(void)
 # ifdef FEAT_EVAL
 	Window	x11_window;
 	Display	*x11_display;
-
-	if (gui_get_x11_windis(&x11_window, &x11_display) == OK)
-	    set_vim_var_nr(VV_WINDOWID, (long)x11_window);
+	if (gui_is_x11()) {
+		if (gui_get_x11_windis(&x11_window, &x11_display) == OK)
+		    set_vim_var_nr(VV_WINDOWID, (long)x11_window);
+	}
 # endif
 
 	// Display error messages in a dialog now.

@@ -216,6 +216,8 @@ serverRegisterName(
     Display	*dpy,		// display to register with
     char_u	*name)		// the name that will be used as a base
 {
+    if (!gui_is_x11())
+	return OK;
     int		i;
     int		res;
     char_u	*p = NULL;
